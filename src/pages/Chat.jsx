@@ -82,7 +82,7 @@ export default function Chat() {
     setUnreadCounts((prev) => ({ ...prev, [u._id]: 0 }));
   };
 
-  // FAST DECRYPT ENGINE
+  // FAST DECRYPT ENGINE (With Robust Fallback)
   const decryptMessage = async (msg, sharedKey) => {
     if (msg.isDeleted) return 'This message was deleted';
     if (msg.messageType !== 'text' || !msg.encryptedText || !msg.iv || !msg.authTag) {
@@ -95,6 +95,7 @@ export default function Chat() {
       return msg.text;
     }
 
+    // 1. Try ECDH Envelope Decryption if sharedKey exists
     const envelopes = [msg.recipientKeyWrap, msg.senderKeyWrap].filter(Boolean);
     if (envelopes.length && sharedKey) {
       try {
@@ -108,6 +109,7 @@ export default function Chat() {
       } catch (err) {}
     }
 
+    // 2. Try Direct ECDH Derived Key
     if (sharedKey) {
       try {
         const derivedText = await decryptWithDerivedKey(msg.encryptedText, msg.iv, msg.authTag, sharedKey);
@@ -115,12 +117,23 @@ export default function Chat() {
       } catch (err) {}
     }
 
+    // 3. Fallback: Static AES Tunnel Decryption
     try {
       const staticText = await decryptClient(msg.encryptedText, msg.iv, msg.authTag);
       if (staticText && !staticText.startsWith('[')) return staticText;
     } catch (err) {}
 
     return '[Decryption Failed: Mismatched Key]';
+  };
+
+  const fetchUsers = async () => {
+    if (!token || !user?.id) return;
+    try {
+      const res = await axios.get(`${API_BASE}/api/auth/users`, { 
+        headers: { Authorization: `Bearer ${token}` } 
+      });
+      setUsers(res.data.filter((u) => u._id !== user.id));
+    } catch (err) {}
   };
 
   useEffect(() => {
@@ -161,6 +174,7 @@ export default function Chat() {
         }
 
         setMyPrivateKey(privateKeyObj);
+        fetchUsers();
 
         try {
           const adminRes = await axios.get(`${API_BASE}/api/auth/admin-public-key`, { 
@@ -169,7 +183,9 @@ export default function Chat() {
           if (adminRes.data?.publicKey) {
             setAdminPublicKey(await importPublicKey(adminRes.data.publicKey));
           }
-        } catch (err) {}
+        } catch (err) {
+          setAdminPublicKey(null);
+        }
 
       } catch (err) {}
     };
@@ -215,7 +231,6 @@ export default function Chat() {
       return;
     }
 
-    // Connect socket to Deployed Server
     socket.current = io(API_BASE, { auth: { token } });
     socket.current.emit('join', user.id);
 
@@ -294,15 +309,6 @@ export default function Chat() {
   }, [user, activeUser, token, activeSharedKey, myPrivateKey, navigate]);
 
   useEffect(() => {
-    const fetchUsers = async () => {
-      if (!token || !user?.id) return;
-      try {
-        const res = await axios.get(`${API_BASE}/api/auth/users`, { 
-          headers: { Authorization: `Bearer ${token}` } 
-        });
-        setUsers(res.data.filter((u) => u._id !== user.id));
-      } catch (err) {}
-    };
     if (token) fetchUsers();
   }, [token, user]);
 
@@ -470,6 +476,7 @@ export default function Chat() {
         } catch (e) {}
       }
 
+      // 1. Primary: ECDH Dual-Envelope E2EE mode
       if (myPrivateKey && myPublicKey && targetPubKeyStr) {
         const sessionKey = await generateSessionKey();
         const payload = await encryptWithSessionKey(currentText, sessionKey);
@@ -497,11 +504,37 @@ export default function Chat() {
             isFile: false 
           },
           (response) => { 
-            if (!response?.ok) setMessages((prev) => prev.filter((m) => m._id !== tempId)); 
+            if (response?.ok) {
+              setMessages((prev) => prev.map((m) => m._id === tempId ? { ...m, status: 'sent' } : m));
+            } else if (response && !response.ok) {
+              setMessages((prev) => prev.filter((m) => m._id !== tempId));
+            }
           }
         );
         return;
       }
+
+      // 2. Fallback: Static AES Tunnel if recipient has no public key yet
+      const staticEncrypted = await encryptClient(currentText);
+      socket.current.emit(
+        'sendMessage',
+        {
+          senderId: user.id,
+          receiverId: activeUser._id,
+          encryptedText: staticEncrypted.ciphertext,
+          iv: staticEncrypted.iv,
+          authTag: staticEncrypted.authTag,
+          isFile: false
+        },
+        (response) => {
+          if (response?.ok) {
+            setMessages((prev) => prev.map((m) => m._id === tempId ? { ...m, status: 'sent' } : m));
+          } else if (response && !response.ok) {
+            setMessages((prev) => prev.filter((m) => m._id !== tempId));
+          }
+        }
+      );
+
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m._id !== tempId));
     }
