@@ -11,13 +11,18 @@ export default function Auth() {
   const { login } = useContext(AuthContext);
   const navigate = useNavigate();
 
+  // Dynamic API Base URL (Deployed backend ba Localhost fallback)
+  const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
 
     try {
-      const res = await axios.post(`http://localhost:5000${endpoint}`, formData);
+      // Hardcoded localhost er jaygay dynamic API_BASE use kora hoyeche
+      const res = await axios.post(`${API_BASE}${endpoint}`, formData);
+      
       if (isLogin) {
         login(res.data.user, res.data.token);
         if (res.data.user.role === 'admin') {
