@@ -234,6 +234,18 @@ export async function unwrapKeyForUser(wrappedKey, sharedKey) {
   }
 }
 
+export function getAdminKeyWrap(adminKeyWrap, adminId) {
+  if (!adminKeyWrap) return null;
+
+  try {
+    const parsed = typeof adminKeyWrap === 'string' ? JSON.parse(adminKeyWrap) : adminKeyWrap;
+    if (parsed?.encryptedText) return adminKeyWrap;
+    return parsed?.[adminId] || null;
+  } catch {
+    return adminKeyWrap;
+  }
+}
+
 // -------------------------------------------------------------
 // 5. Static Shared Key Fallback (With Guaranteed Hex Fallback)
 // -------------------------------------------------------------

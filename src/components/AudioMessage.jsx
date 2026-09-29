@@ -6,8 +6,11 @@ import {
   unwrapKeyForUser, 
   decryptAudioBytes, 
   importPublicKey, 
-  deriveSharedSecret 
+  deriveSharedSecret,
+  getAdminKeyWrap
 } from '../utils/cryptoClient';
+
+const API_BASE = import.meta.env.VITE_API_URL || 'https://your-backend-app.onrender.com';
 
 export default function AudioMessage({ 
   message, 
@@ -50,7 +53,7 @@ export default function AudioMessage({
     setLoading(true);
     try {
       // 1. Fetch raw encrypted ciphertext bytes from server
-      const res = await axios.get(`http://localhost:5000/api/files/audio/${message._id}`, {
+      const res = await axios.get(`${API_BASE}/api/files/audio/${message._id}`, {
         headers: { Authorization: `Bearer ${token}` },
         responseType: 'arraybuffer'
       });
@@ -68,15 +71,16 @@ export default function AudioMessage({
       }
 
       // 3. Admin Escrow Audit Decryption Flow
-      if (isAdmin && message.adminKeyWrap && myPrivateKey) {
-        keyToUnwrap = message.adminKeyWrap;
+      const adminKeyWrap = getAdminKeyWrap(message.adminKeyWrap, currentUserId);
+      if (isAdmin && adminKeyWrap && myPrivateKey) {
+        keyToUnwrap = adminKeyWrap;
 
         let senderPubKeyStr = message.senderPublicKey || message.sender?.publicKey;
 
         // Agar socket payload me public key missing ho toh server se fetch karein
         if (!senderPubKeyStr) {
           const senderId = message.sender?._id || message.sender;
-          const userRes = await axios.get('http://localhost:5000/api/auth/users', {
+          const userRes = await axios.get(`${API_BASE}/api/auth/users`, {
             headers: { Authorization: `Bearer ${token}` }
           });
           const targetSender = userRes.data.find(u => u._id === senderId);

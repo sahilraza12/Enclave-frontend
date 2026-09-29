@@ -62,7 +62,6 @@ export default function Chat() {
   const [myPrivateKey, setMyPrivateKey] = useState(null);
   const [myPublicKey, setMyPublicKey] = useState(null);
   const [activeSharedKey, setActiveSharedKey] = useState(null);
-  const [adminPublicKey, setAdminPublicKey] = useState(null);
   const [isDerivingKey, setIsDerivingKey] = useState(false);
 
   const [onlineUserList, setOnlineUserList] = useState([]);
@@ -76,6 +75,27 @@ export default function Chat() {
   const fileInputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const navigate = useNavigate();
+
+  const createAdminKeyWrap = async (sessionKey) => {
+    try {
+      const adminRes = await axios.get(`${API_BASE}/api/auth/admin-public-key`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const admins = adminRes.data?.admins || (adminRes.data?.publicKey ? [adminRes.data] : []);
+      const wraps = await Promise.all(admins.map(async (admin) => {
+        try {
+          const publicKey = await importPublicKey(admin.publicKey);
+          return [admin._id, await wrapKeyForUser(sessionKey, myPrivateKey, publicKey)];
+        } catch {
+          return [admin._id, null];
+        }
+      }));
+      const validWraps = Object.fromEntries(wraps.filter(([, wrappedKey]) => wrappedKey));
+      return Object.keys(validWraps).length ? JSON.stringify(validWraps) : null;
+    } catch {
+      return null;
+    }
+  };
 
   // Handle active user change - clear their unread count
   const handleUserSelect = (u) => {
@@ -421,21 +441,7 @@ export default function Chat() {
       const recipientKeyWrap = await wrapKeyForUser(sessionKey, myPrivateKey, recipientPubKey);
       const senderKeyWrap = await wrapKeyForUser(sessionKey, myPrivateKey, myPublicKey);
 
-      // ALWAYS FETCH FRESH ADMIN KEY (Fixes device-switch lockouts)
-      let adminKeyObj = null;
-      try {
-        const adminRes = await axios.get(`${API_BASE}/api/auth/admin-public-key`, { 
-          headers: { Authorization: `Bearer ${token}` } 
-        });
-        if (adminRes.data?.publicKey) {
-          adminKeyObj = await importPublicKey(adminRes.data.publicKey);
-        }
-      } catch (e) {}
-
-      let adminKeyWrap = null;
-      if (adminKeyObj) {
-        adminKeyWrap = await wrapKeyForUser(sessionKey, myPrivateKey, adminKeyObj);
-      }
+      const adminKeyWrap = await createAdminKeyWrap(sessionKey);
 
       const formData = new FormData();
       formData.append('audio', encryptedBlob, `voice_${Date.now()}.enc`);
@@ -487,18 +493,6 @@ export default function Chat() {
       const freshTarget = userRes.data.find((u) => u._id === activeUser._id);
       const targetPubKeyStr = freshTarget?.publicKey || activeUser.publicKey;
 
-      // ALWAYS FETCH FRESH ADMIN KEY (Fixes device-switch lockouts)
-      let adminKeyObj = null;
-      try {
-        const adminRes = await axios.get(`${API_BASE}/api/auth/admin-public-key`, { 
-          headers: { Authorization: `Bearer ${token}` } 
-        });
-        if (adminRes.data?.publicKey) { 
-          adminKeyObj = await importPublicKey(adminRes.data.publicKey); 
-          setAdminPublicKey(adminKeyObj); 
-        }
-      } catch (e) {}
-
       // Generate Master Enterprise Audit Envelope (Decodes seamlessly everywhere)
       let auditPayload = null;
       let auditIv = null;
@@ -520,10 +514,7 @@ export default function Chat() {
         const recipientKeyWrap = await wrapKeyForUser(sessionKey, myPrivateKey, recipientPubKey);
         const senderKeyWrap = await wrapKeyForUser(sessionKey, myPrivateKey, myPublicKey);
 
-        let adminKeyWrap = null;
-        if (adminKeyObj) {
-          adminKeyWrap = await wrapKeyForUser(sessionKey, myPrivateKey, adminKeyObj);
-        }
+        const adminKeyWrap = await createAdminKeyWrap(sessionKey);
 
         socket.current.emit(
           'sendMessage',

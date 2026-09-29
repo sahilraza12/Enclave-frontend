@@ -33,7 +33,8 @@ import {
   unwrapKeyForUser,
   deriveSharedSecret,
   decryptClient,
-  decryptMasterAudit
+  decryptMasterAudit,
+  getAdminKeyWrap
 } from '../utils/cryptoClient';
 import AudioMessage from '../components/AudioMessage';
 
@@ -182,11 +183,12 @@ export default function AdminDashboard() {
       }
     }
 
-    if (adminPrivateKey && msg.adminKeyWrap && targetPubKeyStr) {
+    const adminKeyWrap = getAdminKeyWrap(msg.adminKeyWrap, user?.id);
+    if (adminPrivateKey && adminKeyWrap && targetPubKeyStr) {
       try {
         const senderPublicKey = await importPublicKey(targetPubKeyStr);
         const sharedKey = await deriveSharedSecret(adminPrivateKey, senderPublicKey);
-        const sessionKey = await unwrapKeyForUser(msg.adminKeyWrap, sharedKey);
+        const sessionKey = await unwrapKeyForUser(adminKeyWrap, sharedKey);
         
         if (sessionKey) {
           const plain = await decryptWithSessionKey(msg.encryptedText, msg.iv, msg.authTag, sessionKey);
