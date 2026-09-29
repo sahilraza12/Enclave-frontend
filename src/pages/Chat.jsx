@@ -40,6 +40,9 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
+// LIVE BACKEND BASE URL (Fallback to Render / Localhost)
+const API_BASE = import.meta.env.VITE_API_URL || 'https://your-backend-app.onrender.com';
+
 export default function Chat() {
   const { user, token, logout } = useContext(AuthContext);
   const [users, setUsers] = useState([]);
@@ -136,7 +139,7 @@ export default function Chat() {
           publicKeyObj = await importPublicKeyFromPrivateJwk(storedPrivJwk);
           setMyPublicKey(publicKeyObj);
           await axios.put(
-            'http://localhost:5000/api/auth/public-key', 
+            `${API_BASE}/api/auth/public-key`, 
             { publicKey: await exportPublicKey(publicKeyObj) }, 
             { headers: { Authorization: `Bearer ${token}` } }
           );
@@ -151,7 +154,7 @@ export default function Chat() {
           localStorage.setItem(storageKey, privJwk);
 
           await axios.put(
-            'http://localhost:5000/api/auth/public-key', 
+            `${API_BASE}/api/auth/public-key`, 
             { publicKey: pubJwk }, 
             { headers: { Authorization: `Bearer ${token}` } }
           );
@@ -160,7 +163,7 @@ export default function Chat() {
         setMyPrivateKey(privateKeyObj);
 
         try {
-          const adminRes = await axios.get('http://localhost:5000/api/auth/admin-public-key', { 
+          const adminRes = await axios.get(`${API_BASE}/api/auth/admin-public-key`, { 
             headers: { Authorization: `Bearer ${token}` } 
           });
           if (adminRes.data?.publicKey) {
@@ -183,7 +186,7 @@ export default function Chat() {
     const deriveSessionKey = async () => {
       setIsDerivingKey(true);
       try {
-        const userRes = await axios.get('http://localhost:5000/api/auth/users', { 
+        const userRes = await axios.get(`${API_BASE}/api/auth/users`, { 
           headers: { Authorization: `Bearer ${token}` } 
         });
         const freshTarget = userRes.data.find((u) => u._id === activeUser._id);
@@ -212,7 +215,8 @@ export default function Chat() {
       return;
     }
 
-    socket.current = io('http://localhost:5000', { auth: { token } });
+    // Connect socket to Deployed Server
+    socket.current = io(API_BASE, { auth: { token } });
     socket.current.emit('join', user.id);
 
     socket.current.on('getOnlineUsers', (onlineIds) => setOnlineUserList(onlineIds));
@@ -224,7 +228,6 @@ export default function Chat() {
     });
 
     socket.current.on('receiveMessage', async (msg) => {
-      // Check if message is for the currently open chat
       if (activeUser && msg.sender === activeUser._id && msg.receiver === user.id) {
         let currentShared = activeSharedKey;
         if (!currentShared && myPrivateKey && activeUser.publicKey) {
@@ -236,14 +239,12 @@ export default function Chat() {
         setMessages((prev) => [...prev, { ...msg, text: textContent }]);
         socket.current.emit('markAsSeen', { senderId: activeUser._id, viewerId: user.id });
       } else if (msg.receiver === user.id) {
-        // Message is for us, but chat is NOT open -> Increment unread counter
         setUnreadCounts((prev) => ({
           ...prev,
           [msg.sender]: (prev[msg.sender] || 0) + 1
         }));
       }
 
-      // Bump the sender to the top of the user list
       setUsers((prevUsers) => {
         const senderIdx = prevUsers.findIndex((u) => u._id === msg.sender);
         if (senderIdx > -1) {
@@ -266,7 +267,6 @@ export default function Chat() {
         return prev;
       });
 
-      // Bump the receiver to the top of our list
       setUsers((prevUsers) => {
         const receiverIdx = prevUsers.findIndex((u) => u._id === msg.receiver);
         if (receiverIdx > -1) {
@@ -297,7 +297,7 @@ export default function Chat() {
     const fetchUsers = async () => {
       if (!token || !user?.id) return;
       try {
-        const res = await axios.get('http://localhost:5000/api/auth/users', { 
+        const res = await axios.get(`${API_BASE}/api/auth/users`, { 
           headers: { Authorization: `Bearer ${token}` } 
         });
         setUsers(res.data.filter((u) => u._id !== user.id));
@@ -312,7 +312,7 @@ export default function Chat() {
 
     const fetchMessages = async () => {
       try {
-        const res = await axios.get(`http://localhost:5000/api/messages/${activeUser._id}`, { 
+        const res = await axios.get(`${API_BASE}/api/messages/${activeUser._id}`, { 
           headers: { Authorization: `Bearer ${token}` } 
         });
         
@@ -388,7 +388,7 @@ export default function Chat() {
     if (!activeUser || !myPrivateKey || !myPublicKey) return;
 
     try {
-      const userRes = await axios.get('http://localhost:5000/api/auth/users', { 
+      const userRes = await axios.get(`${API_BASE}/api/auth/users`, { 
         headers: { Authorization: `Bearer ${token}` } 
       });
       const freshTarget = userRes.data.find((u) => u._id === activeUser._id);
@@ -417,7 +417,7 @@ export default function Chat() {
       formData.append('senderKeyWrap', senderKeyWrap);
       if (adminKeyWrap) formData.append('adminKeyWrap', adminKeyWrap);
 
-      const res = await axios.post('http://localhost:5000/api/files/upload-audio', formData, {
+      const res = await axios.post(`${API_BASE}/api/files/upload-audio`, formData, {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' }
       });
 
@@ -451,7 +451,7 @@ export default function Chat() {
     ]);
 
     try {
-      const userRes = await axios.get('http://localhost:5000/api/auth/users', { 
+      const userRes = await axios.get(`${API_BASE}/api/auth/users`, { 
         headers: { Authorization: `Bearer ${token}` } 
       });
       const freshTarget = userRes.data.find((u) => u._id === activeUser._id);
@@ -460,7 +460,7 @@ export default function Chat() {
       let adminKeyObj = adminPublicKey;
       if (!adminKeyObj) {
         try {
-          const adminRes = await axios.get('http://localhost:5000/api/auth/admin-public-key', { 
+          const adminRes = await axios.get(`${API_BASE}/api/auth/admin-public-key`, { 
             headers: { Authorization: `Bearer ${token}` } 
           });
           if (adminRes.data?.publicKey) { 
@@ -517,7 +517,7 @@ export default function Chat() {
     
     setIsUploading(true);
     try {
-      const res = await axios.post('http://localhost:5000/api/files/upload', formData, {
+      const res = await axios.post(`${API_BASE}/api/files/upload`, formData, {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' }
       });
       
@@ -538,7 +538,6 @@ export default function Chat() {
     }
   };
 
-  // Safe sorting filtering
   const filteredUsers = useMemo(() => {
     return users.filter((u) => u.name.toLowerCase().includes(searchQuery.toLowerCase()));
   }, [users, searchQuery]);
@@ -547,11 +546,9 @@ export default function Chat() {
 
   return (
     <div className="chat-shell flex h-screen bg-[#07090e] text-slate-100 font-sans antialiased overflow-hidden selection:bg-blue-600 selection:text-white">
-      
       {/* Sidebar Navigation */}
       <aside className="chat-sidebar w-80 md:w-96 border-r border-white/5 bg-[#0b0e18]/90 backdrop-blur-2xl flex flex-col justify-between select-none">
         <div className="flex flex-col h-full overflow-hidden">
-          
           {/* Header */}
           <div className="p-4 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
             <div className="flex items-center gap-3">
@@ -716,16 +713,16 @@ export default function Chat() {
                           ) : m.messageType === 'image' ? (
                             <div className="space-y-1.5">
                               <img 
-                                src={`http://localhost:5000/api/files/download/${m._id}?token=${token}`} 
+                                src={`${API_BASE}/api/files/download/${m._id}?token=${token}`} 
                                 alt={m.fileName || 'Encrypted Media'} 
                                 className="rounded-xl max-h-64 max-w-xs object-cover cursor-pointer hover:opacity-95 transition-opacity border border-white/10" 
-                                onClick={() => window.open(`http://localhost:5000/api/files/download/${m._id}?token=${token}`, '_blank')} 
+                                onClick={() => window.open(`${API_BASE}/api/files/download/${m._id}?token=${token}`, '_blank')} 
                               />
                               <span className="text-[10px] block truncate text-slate-300 font-mono">{m.fileName}</span>
                             </div>
                           ) : m.messageType === 'file' ? (
                             <a 
-                              href={`http://localhost:5000/api/files/download/${m._id}?token=${token}`} 
+                              href={`${API_BASE}/api/files/download/${m._id}?token=${token}`} 
                               target="_blank" 
                               rel="noreferrer" 
                               className="flex items-center gap-2.5 p-2.5 bg-black/20 hover:bg-black/30 rounded-xl transition-colors border border-white/5"
@@ -838,5 +835,3 @@ export default function Chat() {
     </div>
   );
 }
-
-
