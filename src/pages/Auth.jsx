@@ -116,9 +116,9 @@ export default function Auth() {
           </button>
         </form>
 
-          {/* <button type="button" className="switch-button" onClick={() => setIsLogin(!isLogin)}>
+          <button type="button" className="switch-button" onClick={() => setIsLogin(!isLogin)}>
             {isLogin ? <><span>New to Char?</span> Create an account</> : <><span>Already a member?</span> Sign in</>}
-          </button> */}
+          </button>
           <div className="form-note"><KeyRound size={14} /><span>Protected connection <Check size={14} /></span></div>
         </div>
       </section>
