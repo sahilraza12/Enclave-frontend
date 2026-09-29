@@ -1,31 +1,63 @@
+// client/src/pages/Auth.jsx
 import React, { useState, useContext } from 'react';
 import axios from 'axios';
 import { AuthContext } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Check, KeyRound, LockKeyhole, ShieldCheck } from 'lucide-react';
+import { 
+  generateUserKeyPair, 
+  exportPublicKey, 
+  exportPrivateKey 
+} from '../utils/cryptoClient';
 
 export default function Auth() {
   const [isLogin, setIsLogin] = useState(true);
   const [formData, setFormData] = useState({ name: '', email: '', password: '', role: 'user' });
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const { login } = useContext(AuthContext);
   const navigate = useNavigate();
 
-  // Dynamic API Base URL (Deployed backend ba Localhost fallback)
-  const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  // Dynamic API Base URL with Live Fallback
+  const API_BASE = import.meta.env.VITE_API_URL || 'https://your-backend-app.onrender.com';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
     const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
 
     try {
-      // Hardcoded localhost er jaygay dynamic API_BASE use kora hoyeche
       const res = await axios.post(`${API_BASE}${endpoint}`, formData);
       
       if (isLogin) {
-        login(res.data.user, res.data.token);
-        if (res.data.user.role === 'admin') {
+        const loggedUser = res.data.user;
+        const userToken = res.data.token;
+
+        // Auto-Initialize & Sync ECDH Key for this Device immediately on login
+        try {
+          const storageKey = `ecdh_priv_${loggedUser.id || loggedUser._id}`;
+          let storedPrivJwk = localStorage.getItem(storageKey);
+
+          if (!storedPrivJwk) {
+            const keyPair = await generateUserKeyPair();
+            const privJwk = await exportPrivateKey(keyPair.privateKey);
+            const pubJwk = await exportPublicKey(keyPair.publicKey);
+            localStorage.setItem(storageKey, privJwk);
+
+            await axios.put(
+              `${API_BASE}/api/auth/public-key`, 
+              { publicKey: pubJwk }, 
+              { headers: { Authorization: `Bearer ${userToken}` } }
+            );
+          }
+        } catch (keyErr) {
+          console.warn('Key setup skipped or deferred:', keyErr);
+        }
+
+        login(loggedUser, userToken);
+        
+        if (loggedUser.role === 'admin') {
           navigate('/admin');
         } else {
           navigate('/chat');
@@ -35,7 +67,9 @@ export default function Auth() {
         alert('Registered successfully! Please login.');
       }
     } catch (err) {
-      setError(err.response?.data?.message || 'Something went wrong');
+      setError(err.response?.data?.message || err.response?.data?.error || 'Something went wrong');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -55,6 +89,7 @@ export default function Auth() {
         </div>
         <div className="intro-footer"><span>EST. 2024</span><span className="footer-line" /><span>SECURE BY DEFAULT</span></div>
       </section>
+
       <section className="auth-panel">
         <div className="auth-panel-inner">
           <div className="mobile-brand"><div className="brand-mark"><LockKeyhole size={18} /></div><span>CHAR</span></div>
@@ -65,61 +100,62 @@ export default function Auth() {
           </div>
           {error && <div className="auth-error" role="alert">{error}</div>}
           <form onSubmit={handleSubmit} className="auth-form">
-          {!isLogin && (
-            <>
-              <div className="field">
-                <label htmlFor="name">Name</label>
-                <input
-                  id="name"
-                  type="text"
-                  required
-                  placeholder="Your name"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="role">Account type</label>
-                <select
-                  id="role"
-                  value={formData.role}
-                  onChange={(e) => setFormData({ ...formData, role: e.target.value })}
-                >
-                  <option value="user">Normal User (Encrypted Chat)</option>
-                  <option value="admin">Admin (Auditor / Decrypt Access)</option>
-                </select>
-              </div>
-            </>
-          )}
+            {!isLogin && (
+              <>
+                <div className="field">
+                  <label htmlFor="name">Name</label>
+                  <input
+                    id="name"
+                    type="text"
+                    required
+                    placeholder="Your name"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="role">Account type</label>
+                  <select
+                    id="role"
+                    value={formData.role}
+                    onChange={(e) => setFormData({ ...formData, role: e.target.value })}
+                  >
+                    <option value="user">Normal User (Encrypted Chat)</option>
+                    <option value="admin">Admin (Auditor / Decrypt Access)</option>
+                  </select>
+                </div>
+              </>
+            )}
 
-          <div className="field">
-            <label htmlFor="email">Email address</label>
-            <input
-              id="email"
-              type="email"
-              required
-              placeholder="you@company.com"
-              value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-            />
-          </div>
+            <div className="field">
+              <label htmlFor="email">Email address</label>
+              <input
+                id="email"
+                type="email"
+                required
+                placeholder="you@company.com"
+                value={formData.email}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              />
+            </div>
 
-          <div className="field">
-            <label htmlFor="password">Password</label>
-            <input
-              id="password"
-              type="password"
-              required
-              placeholder="Enter your password"
-              value={formData.password}
-              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-            />
-          </div>
+            <div className="field">
+              <label htmlFor="password">Password</label>
+              <input
+                id="password"
+                type="password"
+                required
+                placeholder="Enter your password"
+                value={formData.password}
+                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              />
+            </div>
 
-          <button type="submit" className="submit-button">
-            <span>{isLogin ? 'Enter workspace' : 'Create account'}</span><ArrowRight size={18} />
-          </button>
-        </form>
+            <button type="submit" className="submit-button" disabled={loading}>
+              <span>{loading ? 'Securing Session...' : isLogin ? 'Enter workspace' : 'Create account'}</span>
+              <ArrowRight size={18} />
+            </button>
+          </form>
 
           <button type="button" className="switch-button" onClick={() => setIsLogin(!isLogin)}>
             {isLogin ? <><span>New to Char?</span> Create an account</> : <><span>Already a member?</span> Sign in</>}

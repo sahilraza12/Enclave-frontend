@@ -133,14 +133,14 @@ export default function AdminDashboard() {
     initializeAdminKey();
   }, [token, user?.id]);
 
-  // ROBUST DECRYPT ENGINE FOR ADMIN (Supports ECDH Escrow + Static Fallback)
+  // ROBUST DECRYPT ENGINE FOR ADMIN (Supports ECDH Escrow + Static Tunnel Fallback)
   const decryptAdminMessage = async (msg) => {
     if (msg.isDeleted) {
       return { ...msg, text: 'This message was deleted' };
     }
 
     // 1. Plaintext check
-    if (msg.text && !msg.text.startsWith('[') && msg.text !== '') {
+    if (msg.text && !msg.text.startsWith('[') && msg.text.trim() !== '') {
       return msg;
     }
 
@@ -171,7 +171,11 @@ export default function AdminDashboard() {
       } catch (err) {}
     }
 
-    return { ...msg, text: '[Decryption Failed: Mismatched Key / No Escrow]' };
+    // 4. Fallback Display: Never leave empty/mismatched error
+    return { 
+      ...msg, 
+      text: msg.text || (msg.encryptedText ? `[Encrypted Payload: ${msg.encryptedText.substring(0, 28)}...]` : '[Decryption Failed]')
+    };
   };
 
   useEffect(() => {
