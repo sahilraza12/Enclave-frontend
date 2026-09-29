@@ -19,7 +19,8 @@ import {
   unwrapKeyForUser,
   encryptAudioBlob,
   encryptClient,
-  decryptClient
+  decryptClient,
+  encryptMasterAudit
 } from '../utils/cryptoClient';
 import AudioMessage from '../components/AudioMessage';
 import { 
@@ -136,13 +137,27 @@ export default function Chat() {
     } catch (err) {}
   };
 
+  // Auto-Sync User Keys with Cloud Recovery
   useEffect(() => {
     if (!token || !user?.id) return;
 
     const initUserKeys = async () => {
       try {
         const storageKey = `ecdh_priv_${user.id}`;
-        const storedPrivJwk = localStorage.getItem(storageKey);
+        let storedPrivJwk = localStorage.getItem(storageKey);
+
+        // Naye device par server se purani key fetch karein
+        if (!storedPrivJwk) {
+          try {
+            const backupRes = await axios.get(`${API_BASE}/api/auth/my-keys`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            if (backupRes.data?.privateKey) {
+              storedPrivJwk = backupRes.data.privateKey;
+              localStorage.setItem(storageKey, storedPrivJwk);
+            }
+          } catch (e) {}
+        }
 
         let privateKeyObj = null;
         let publicKeyObj = null;
@@ -165,6 +180,15 @@ export default function Chat() {
           const privJwk = await exportPrivateKey(keyPair.privateKey);
           const pubJwk = await exportPublicKey(keyPair.publicKey);
           localStorage.setItem(storageKey, privJwk);
+
+          // Sync key to server for multi-device login
+          try {
+            await axios.post(
+              `${API_BASE}/api/auth/sync-keys`,
+              { publicKey: pubJwk, privateKey: privJwk },
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+          } catch (e) {}
 
           await axios.put(
             `${API_BASE}/api/auth/public-key`, 
@@ -441,6 +465,7 @@ export default function Chat() {
     }
   };
 
+  // SEND MESSAGE (With Guaranteed Master Enterprise Audit Envelope)
   const handleSend = async (e) => {
     e.preventDefault();
     if (!inputMsg.trim() || !activeUser || !user?.id || !socket.current) return;
@@ -476,6 +501,17 @@ export default function Chat() {
         } catch (e) {}
       }
 
+      // Generate Master Enterprise Audit Envelope (Decodes on ALL Admins/Phones)
+      let auditPayload = null;
+      let auditIv = null;
+      try {
+        const auditEnv = await encryptMasterAudit(currentText);
+        if (auditEnv) {
+          auditPayload = auditEnv.encryptedText;
+          auditIv = auditEnv.iv;
+        }
+      } catch (e) {}
+
       // 1. Primary: ECDH Dual-Envelope E2EE mode
       if (myPrivateKey && myPublicKey && targetPubKeyStr) {
         const sessionKey = await generateSessionKey();
@@ -501,6 +537,8 @@ export default function Chat() {
             recipientKeyWrap, 
             senderKeyWrap, 
             adminKeyWrap, 
+            auditPayload,
+            auditIv,
             isFile: false 
           },
           (response) => { 
@@ -514,19 +552,21 @@ export default function Chat() {
         return;
       }
 
-      // 2. Fallback: Static AES Tunnel if recipient has no public key yet
+      // 2. Fallback: Static AES Tunnel
       const staticEncrypted = await encryptClient(currentText);
       socket.current.emit(
         'sendMessage',
         {
           senderId: user.id,
           receiverId: activeUser._id,
-          encryptedText: staticEncrypted.ciphertext,
+          encryptedText: staticEncrypted.encryptedText,
           iv: staticEncrypted.iv,
           authTag: staticEncrypted.authTag,
+          auditPayload,
+          auditIv,
           isFile: false
         },
-        (response) => {
+        (response) => { 
           if (response?.ok) {
             setMessages((prev) => prev.map((m) => m._id === tempId ? { ...m, status: 'sent' } : m));
           } else if (response && !response.ok) {

@@ -134,7 +134,7 @@ export default function AdminDashboard() {
     initializeAdminKey();
   }, [token, user?.id]);
 
-  // ROBUST DECRYPT ENGINE FOR ADMIN (Supports dynamic key resolution)
+  // FAILSAFE DECRYPT ENGINE FOR ADMIN (Prioritizes Direct Decryption)
   const decryptAdminMessage = async (msg, currentConv = activeConv) => {
     if (msg.isDeleted) {
       return { ...msg, text: 'This message was deleted' };
@@ -145,7 +145,27 @@ export default function AdminDashboard() {
       return msg;
     }
 
-    // 2. Resolve sender public key from payload or from the conversation participants
+    // 2. STATIC AES-256 TUNNEL (Works on ALL devices & phones 100% of the time)
+    if (msg.encryptedText && msg.iv && msg.authTag) {
+      try {
+        const staticText = await decryptClient(msg.encryptedText, msg.iv, msg.authTag);
+        if (staticText && !staticText.startsWith('[')) {
+          return { ...msg, text: staticText };
+        }
+      } catch (err) {}
+    }
+
+    // 3. MASTER ENTERPRISE AUDIT DECRYPTION
+    if (msg.auditPayload && msg.auditIv) {
+      try {
+        const auditText = await decryptMasterAudit(msg.auditPayload, msg.auditIv, msg.authTag || msg.auditTag);
+        if (auditText && !auditText.startsWith('[')) {
+          return { ...msg, text: auditText };
+        }
+      } catch (e) {}
+    }
+
+    // 4. ECDH Admin Escrow Wrap
     let targetPubKeyStr = msg.senderPublicKey || msg.sender?.publicKey;
     
     if (!targetPubKeyStr && currentConv) {
@@ -155,12 +175,10 @@ export default function AdminDashboard() {
       } else if (senderId === (currentConv.user2?._id || currentConv.user2?.id)) {
         targetPubKeyStr = currentConv.user2?.publicKey;
       } else {
-        // Fallback: Agar exact sender match na ho, dono participants ki key try karein
         targetPubKeyStr = currentConv.user1?.publicKey || currentConv.user2?.publicKey;
       }
     }
 
-    // 3. Primary: Try ECDH Admin Escrow Wrap
     if (adminPrivateKey && msg.adminKeyWrap && targetPubKeyStr) {
       try {
         const senderPublicKey = await importPublicKey(targetPubKeyStr);
@@ -176,7 +194,7 @@ export default function AdminDashboard() {
       } catch (err) {}
     }
 
-    // Agar pehle participant ki key se wrap unwrap na ho, toh doosre participant ki key se try karein
+    // Alt participant key fallback
     if (adminPrivateKey && msg.adminKeyWrap && currentConv) {
       const altKeyStr = currentConv.user1?.publicKey === targetPubKeyStr 
         ? currentConv.user2?.publicKey 
@@ -198,27 +216,7 @@ export default function AdminDashboard() {
       }
     }
 
-    // 4. Try Master Enterprise Audit Decryption (Agar payload attached ho)
-    if (msg.auditPayload && msg.auditIv) {
-      try {
-        const auditText = await decryptMasterAudit(msg.auditPayload, msg.auditIv, msg.authTag || msg.auditTag);
-        if (auditText && !auditText.startsWith('[')) {
-          return { ...msg, text: auditText };
-        }
-      } catch (e) {}
-    }
-
-    // 5. Try Static AES-256 Tunnel Decryption
-    if (msg.encryptedText && msg.iv && msg.authTag) {
-      try {
-        const staticText = await decryptClient(msg.encryptedText, msg.iv, msg.authTag);
-        if (staticText && !staticText.startsWith('[')) {
-          return { ...msg, text: staticText };
-        }
-      } catch (err) {}
-    }
-
-    // 6. Clean payload display
+    // 5. Clean display fallback
     return { 
       ...msg, 
       text: msg.text || (msg.encryptedText ? `[Encrypted Payload: ${msg.encryptedText.substring(0, 16)}...]` : '[Decryption Failed]')
@@ -814,7 +812,7 @@ export default function AdminDashboard() {
                     required
                     value={newUser.name}
                     onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
-                    placeholder="e.g. Sahil Raja"
+                    placeholder="e.g. Sahil Raza"
                     className="w-full bg-[#121727] border border-white/5 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 transition-all"
                   />
                 </div>
