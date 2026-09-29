@@ -31,14 +31,17 @@ import {
   importPublicKey,
   importPublicKeyFromPrivateJwk,
   unwrapKeyForUser,
-  deriveSharedSecret // FIXED: Imported the correct derivation function
+  deriveSharedSecret
 } from '../utils/cryptoClient';
 import AudioMessage from '../components/AudioMessage';
+
+// LIVE BACKEND BASE URL (Fallback to Render / Localhost)
+const API_BASE = import.meta.env.VITE_API_URL || 'https://your-backend-app.onrender.com';
 
 export default function AdminDashboard() {
   const { token, logout, user } = useContext(AuthContext);
   const [activeTab, setActiveTab] = useState('chats'); 
-                                                   
+                                                      
   const [conversations, setConversations] = useState([]);
   const [activeConv, setActiveConv] = useState(null);
   const [chatLogs, setChatLogs] = useState([]);
@@ -77,10 +80,9 @@ export default function AdminDashboard() {
         const storageKey = `ecdh_priv_${user.id}`;
         let storedPrivateKey = localStorage.getItem(storageKey);
 
-        // CLOUD RESTORE FALLBACK (Like we did in Chat.jsx)
         if (!storedPrivateKey) {
           try {
-            const res = await axios.get('http://localhost:5000/api/auth/my-keys', {
+            const res = await axios.get(`${API_BASE}/api/auth/my-keys`, {
               headers: { Authorization: `Bearer ${token}` } 
             });
             if (res.data?.privateKey) {
@@ -96,29 +98,27 @@ export default function AdminDashboard() {
           setAdminPrivateKey(await importPrivateKey(storedPrivateKey));
           const publicKeyObj = await importPublicKeyFromPrivateJwk(storedPrivateKey);
           await axios.put(
-            'http://localhost:5000/api/auth/public-key',
+            `${API_BASE}/api/auth/public-key`,
             { publicKey: await exportPublicKey(publicKeyObj) },
             { headers: { Authorization: `Bearer ${token}` } }
           );
           return;
         }
 
-        // Generate brand new key if literally first time
         const keyPair = await generateUserKeyPair();
         const privJwk = await exportPrivateKey(keyPair.privateKey);
         const pubJwk = await exportPublicKey(keyPair.publicKey);
         
         localStorage.setItem(storageKey, privJwk);
         
-        // Save to DB and Update PubKey
         await axios.post(
-          'http://localhost:5000/api/auth/sync-keys', 
+          `${API_BASE}/api/auth/sync-keys`, 
           { publicKey: pubJwk, privateKey: privJwk }, 
           { headers: { Authorization: `Bearer ${token}` } }
         );
 
         await axios.put(
-          'http://localhost:5000/api/auth/public-key',
+          `${API_BASE}/api/auth/public-key`,
           { publicKey: pubJwk },
           { headers: { Authorization: `Bearer ${token}` } }
         );
@@ -132,7 +132,7 @@ export default function AdminDashboard() {
     initializeAdminKey();
   }, [token, user?.id]);
 
-  // ROBUST DECRYPT ENGINE FOR ADMIN (Matches Chat.jsx format perfectly)
+  // Robust Decrypt Engine for Admin Escrow
   const decryptAdminMessage = async (msg) => {
     if (msg.isDeleted) {
       return { ...msg, text: 'This message was deleted' };
@@ -146,10 +146,7 @@ export default function AdminDashboard() {
 
     try {
       const senderPublicKey = await importPublicKey(targetPubKeyStr);
-      
-      // FIXED: Used the exact derivation method to match Chat.jsx 
       const sharedKey = await deriveSharedSecret(adminPrivateKey, senderPublicKey);
-
       const sessionKey = await unwrapKeyForUser(msg.adminKeyWrap, sharedKey);
       
       if (sessionKey) {
@@ -166,7 +163,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (!token || user?.role !== 'admin') return;
 
-    const adminSocket = io('http://localhost:5000', { auth: { token } });
+    const adminSocket = io(API_BASE, { auth: { token } });
     adminSocket.emit('joinAdminMonitor');
 
     adminSocket.on('liveAdminFeed', (newMsg) => {
@@ -193,7 +190,7 @@ export default function AdminDashboard() {
 
   const fetchConversations = async () => {
     try {
-      const res = await axios.get('http://localhost:5000/api/admin/conversations', {
+      const res = await axios.get(`${API_BASE}/api/admin/conversations`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setConversations(res.data);
@@ -202,7 +199,7 @@ export default function AdminDashboard() {
 
   const fetchActivityLogs = async () => {
     try {
-      const res = await axios.get('http://localhost:5000/api/admin/activity-logs', {
+      const res = await axios.get(`${API_BASE}/api/admin/activity-logs`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setActivityLogs(res.data);
@@ -213,7 +210,7 @@ export default function AdminDashboard() {
     setActiveConv(conv);
     setMessageSearchQuery('');
     try {
-      const res = await axios.get(`http://localhost:5000/api/admin/conversation/${conv._id}?limit=30`, {
+      const res = await axios.get(`${API_BASE}/api/admin/conversation/${conv._id}?limit=30`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setChatLogs(await Promise.all(res.data.messages.map(decryptAdminMessage)));
@@ -226,7 +223,7 @@ export default function AdminDashboard() {
     if (!cursor || !activeConv) return;
     try {
       const res = await axios.get(
-        `http://localhost:5000/api/admin/conversation/${activeConv._id}?before=${cursor}&limit=30`,
+        `${API_BASE}/api/admin/conversation/${activeConv._id}?before=${cursor}&limit=30`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const decOlder = await Promise.all(res.data.messages.map(decryptAdminMessage));
@@ -242,7 +239,7 @@ export default function AdminDashboard() {
     setIsSubmittingUser(true);
 
     try {
-      const res = await axios.post('http://localhost:5000/api/admin/create-user', newUser, {
+      const res = await axios.post(`${API_BASE}/api/admin/create-user`, newUser, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setProvisionStatus({ type: 'success', message: `Account for "${res.data.user.name}" created successfully!` });
@@ -573,10 +570,10 @@ export default function AdminDashboard() {
                         ) : log.messageType === 'image' ? (
                           <div className="space-y-2 pt-1">
                             <img
-                              src={`http://localhost:5000/api/files/download/${log._id}?token=${token}`}
+                              src={`${API_BASE}/api/files/download/${log._id}?token=${token}`}
                               alt={log.fileName}
                               className="max-h-72 rounded-xl border border-white/5 object-cover cursor-pointer hover:opacity-95 transition-opacity"
-                              onClick={() => window.open(`http://localhost:5000/api/files/download/${log._id}?token=${token}`, '_blank')}
+                              onClick={() => window.open(`${API_BASE}/api/files/download/${log._id}?token=${token}`, '_blank')}
                             />
                             <p className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
                               <Eye size={11} /> {log.fileName}
@@ -589,7 +586,7 @@ export default function AdminDashboard() {
                               <span className="text-xs font-mono text-slate-300 truncate">{log.fileName}</span>
                             </div>
                             <a
-                              href={`http://localhost:5000/api/files/download/${log._id}?token=${token}`}
+                              href={`${API_BASE}/api/files/download/${log._id}?token=${token}`}
                               target="_blank"
                               rel="noreferrer"
                               className="text-xs bg-blue-500/10 hover:bg-blue-600 text-blue-400 hover:text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors flex-shrink-0 border border-blue-500/20"
@@ -609,17 +606,12 @@ export default function AdminDashboard() {
               </div>
             </>
           ) : (
-            // ===============================================
-            // ENHANCED ADMIN EMPTY STATE (CYBER RADAR UI)
-            // ===============================================
             <div className="flex-1 flex flex-col items-center justify-center relative overflow-hidden bg-[#07090e]">
-              {/* Subtle Matrix/Dotted Background */}
               <div 
                 className="absolute inset-0 opacity-[0.03] pointer-events-none" 
                 style={{ backgroundImage: 'radial-gradient(#fff 1px, transparent 1px)', backgroundSize: '24px 24px' }}
               ></div>
               
-              {/* Glowing Shield Radar Effect */}
               <div className="relative z-10 flex flex-col items-center gap-5">
                 <div className="relative flex items-center justify-center w-24 h-24">
                   <div className="absolute inset-0 rounded-full border-2 border-blue-500/20 animate-[ping_3s_ease-in-out_infinite]"></div>
@@ -641,8 +633,7 @@ export default function AdminDashboard() {
             </div>
           )
         ) : activeTab === 'activity' ? (
-          /* User Activity / Duration Tracker Tab */
-            <div className="admin-content flex-1 flex flex-col p-8 overflow-y-auto">
+          <div className="admin-content flex-1 flex flex-col p-8 overflow-y-auto">
             <div className="mb-6 flex justify-between items-center">
               <div>
                 <h2 className="text-base font-bold text-white tracking-wide">Active Sessions & Duration Audit</h2>
@@ -710,7 +701,6 @@ export default function AdminDashboard() {
             </div>
           </div>
         ) : (
-          /* Create User Account Tab */
           <div className="admin-content flex-1 flex flex-col items-center justify-center p-8 overflow-y-auto">
             <div className="w-full max-w-md bg-[#0b0e18] border border-white/5 rounded-2xl p-7 shadow-2xl">
               <div className="flex items-center gap-3.5 mb-5 pb-4 border-b border-white/5">
