@@ -32,7 +32,8 @@ import {
   importPublicKeyFromPrivateJwk,
   unwrapKeyForUser,
   deriveSharedSecret,
-  decryptClient
+  decryptClient,
+  decryptMasterAudit
 } from '../utils/cryptoClient';
 import AudioMessage from '../components/AudioMessage';
 
@@ -133,8 +134,8 @@ export default function AdminDashboard() {
     initializeAdminKey();
   }, [token, user?.id]);
 
-  // ROBUST DECRYPT ENGINE FOR ADMIN (Supports ECDH Escrow + Static Tunnel Fallback)
-  const decryptAdminMessage = async (msg) => {
+  // ROBUST DECRYPT ENGINE FOR ADMIN (Supports dynamic key resolution)
+  const decryptAdminMessage = async (msg, currentConv = activeConv) => {
     if (msg.isDeleted) {
       return { ...msg, text: 'This message was deleted' };
     }
@@ -144,8 +145,22 @@ export default function AdminDashboard() {
       return msg;
     }
 
-    // 2. Primary: Try ECDH Admin Escrow Wrap
-    const targetPubKeyStr = msg.senderPublicKey || msg.sender?.publicKey;
+    // 2. Resolve sender public key from payload or from the conversation participants
+    let targetPubKeyStr = msg.senderPublicKey || msg.sender?.publicKey;
+    
+    if (!targetPubKeyStr && currentConv) {
+      const senderId = typeof msg.sender === 'object' ? (msg.sender?._id || msg.sender?.id) : msg.sender;
+      if (senderId === (currentConv.user1?._id || currentConv.user1?.id)) {
+        targetPubKeyStr = currentConv.user1?.publicKey;
+      } else if (senderId === (currentConv.user2?._id || currentConv.user2?.id)) {
+        targetPubKeyStr = currentConv.user2?.publicKey;
+      } else {
+        // Fallback: Agar exact sender match na ho, dono participants ki key try karein
+        targetPubKeyStr = currentConv.user1?.publicKey || currentConv.user2?.publicKey;
+      }
+    }
+
+    // 3. Primary: Try ECDH Admin Escrow Wrap
     if (adminPrivateKey && msg.adminKeyWrap && targetPubKeyStr) {
       try {
         const senderPublicKey = await importPublicKey(targetPubKeyStr);
@@ -161,7 +176,39 @@ export default function AdminDashboard() {
       } catch (err) {}
     }
 
-    // 3. Fallback: Try Static AES-256 Tunnel Decryption
+    // Agar pehle participant ki key se wrap unwrap na ho, toh doosre participant ki key se try karein
+    if (adminPrivateKey && msg.adminKeyWrap && currentConv) {
+      const altKeyStr = currentConv.user1?.publicKey === targetPubKeyStr 
+        ? currentConv.user2?.publicKey 
+        : currentConv.user1?.publicKey;
+
+      if (altKeyStr) {
+        try {
+          const senderPublicKey = await importPublicKey(altKeyStr);
+          const sharedKey = await deriveSharedSecret(adminPrivateKey, senderPublicKey);
+          const sessionKey = await unwrapKeyForUser(msg.adminKeyWrap, sharedKey);
+          
+          if (sessionKey) {
+            const plain = await decryptWithSessionKey(msg.encryptedText, msg.iv, msg.authTag, sessionKey);
+            if (plain && !plain.startsWith('[')) {
+              return { ...msg, text: plain };
+            }
+          }
+        } catch (err) {}
+      }
+    }
+
+    // 4. Try Master Enterprise Audit Decryption (Agar payload attached ho)
+    if (msg.auditPayload && msg.auditIv) {
+      try {
+        const auditText = await decryptMasterAudit(msg.auditPayload, msg.auditIv, msg.authTag || msg.auditTag);
+        if (auditText && !auditText.startsWith('[')) {
+          return { ...msg, text: auditText };
+        }
+      } catch (e) {}
+    }
+
+    // 5. Try Static AES-256 Tunnel Decryption
     if (msg.encryptedText && msg.iv && msg.authTag) {
       try {
         const staticText = await decryptClient(msg.encryptedText, msg.iv, msg.authTag);
@@ -171,10 +218,10 @@ export default function AdminDashboard() {
       } catch (err) {}
     }
 
-    // 4. Fallback Display: Never leave empty/mismatched error
+    // 6. Clean payload display
     return { 
       ...msg, 
-      text: msg.text || (msg.encryptedText ? `[Encrypted Payload: ${msg.encryptedText.substring(0, 28)}...]` : '[Decryption Failed]')
+      text: msg.text || (msg.encryptedText ? `[Encrypted Payload: ${msg.encryptedText.substring(0, 16)}...]` : '[Decryption Failed]')
     };
   };
 
@@ -186,7 +233,7 @@ export default function AdminDashboard() {
 
     adminSocket.on('liveAdminFeed', (newMsg) => {
       if (activeConv && newMsg.conversationId === activeConv._id) {
-        decryptAdminMessage(newMsg).then((message) => {
+        decryptAdminMessage(newMsg, activeConv).then((message) => {
           setChatLogs((prev) => [...prev, message]);
         });
       }
@@ -231,7 +278,10 @@ export default function AdminDashboard() {
       const res = await axios.get(`${API_BASE}/api/admin/conversation/${conv._id}?limit=30`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setChatLogs(await Promise.all(res.data.messages.map(decryptAdminMessage)));
+      const decrypted = await Promise.all(
+        res.data.messages.map((m) => decryptAdminMessage(m, conv))
+      );
+      setChatLogs(decrypted);
       setHasMore(res.data.hasMore);
       setCursor(res.data.nextCursor);
     } catch (err) {}
@@ -244,7 +294,9 @@ export default function AdminDashboard() {
         `${API_BASE}/api/admin/conversation/${activeConv._id}?before=${cursor}&limit=30`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      const decOlder = await Promise.all(res.data.messages.map(decryptAdminMessage));
+      const decOlder = await Promise.all(
+        res.data.messages.map((m) => decryptAdminMessage(m, activeConv))
+      );
       setChatLogs((prev) => [...decOlder, ...prev]);
       setHasMore(res.data.hasMore);
       setCursor(res.data.nextCursor);
@@ -329,13 +381,22 @@ export default function AdminDashboard() {
                 </div>
               </div>
             </div>
-            <button 
-              onClick={logout} 
-              className="p-2.5 hover:bg-rose-500/10 hover:text-rose-400 text-slate-400 rounded-xl transition-all duration-200 border border-transparent hover:border-rose-500/20 active:scale-95"
-              title="Sign Out"
-            >
-              <LogOut size={17} />
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button 
+                onClick={() => navigate('/chat')}
+                className="p-2 hover:bg-blue-500/10 hover:text-blue-400 text-slate-400 rounded-xl transition-all duration-200 border border-transparent hover:border-blue-500/20 active:scale-95"
+                title="Open Direct Chat"
+              >
+                <MessageSquare size={17} />
+              </button>
+              <button 
+                onClick={logout} 
+                className="p-2 hover:bg-rose-500/10 hover:text-rose-400 text-slate-400 rounded-xl transition-all duration-200 border border-transparent hover:border-rose-500/20 active:scale-95"
+                title="Sign Out"
+              >
+                <LogOut size={17} />
+              </button>
+            </div>
           </div>
 
           {/* Navigation Tabs */}
@@ -562,7 +623,10 @@ export default function AdminDashboard() {
                         <div className="flex justify-between items-center mb-2 pb-1.5 border-b border-white/[0.04]">
                           <span className="text-xs font-semibold text-blue-400 flex items-center gap-1.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                            {log.sender?.name} <span className="text-slate-500 font-normal">({log.sender?.email})</span>
+                            {log.sender?.name || (log.sender === activeConv.user1?._id ? activeConv.user1?.name : activeConv.user2?.name) || 'User'} 
+                            <span className="text-slate-500 font-normal">
+                              ({log.sender?.email || (log.sender === activeConv.user1?._id ? activeConv.user1?.email : activeConv.user2?.email) || 'Encrypted'})
+                            </span>
                           </span>
                           <span className="text-[10px] text-slate-500 font-mono">
                             {new Date(log.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {new Date(log.createdAt).toLocaleDateString()}
