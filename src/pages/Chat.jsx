@@ -37,8 +37,7 @@ import {
   Key, 
   Mic, 
   Square,
-  Ban,
-  Trash2
+  Ban     
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -602,16 +601,6 @@ export default function Chat() {
     }
   };
 
-  const handleDeleteMessage = (message) => {
-    if (!socket.current || message.status === 'sending' || message.isDeleted) return;
-    if (!window.confirm('Delete this message for everyone?')) return;
-
-    socket.current.emit('deleteMessage', {
-      msgId: message._id,
-      receiverId: activeUser?._id
-    });
-  };
-
   const filteredUsers = useMemo(() => {
     return users.filter((u) => u.name.toLowerCase().includes(searchQuery.toLowerCase()));
   }, [users, searchQuery]);
@@ -814,24 +803,12 @@ export default function Chat() {
                       <div className={`flex items-center justify-end gap-1.5 mt-1.5 font-mono text-[10px] ${isMe ? (m.isDeleted ? 'text-slate-500' : 'text-blue-200') : 'text-slate-500'}`}>
                         <span>{new Date(m.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                         {isMe && !m.isDeleted && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteMessage(m)}
-                              disabled={m.status === 'sending'}
-                              className="ml-1 rounded p-1 text-blue-200/70 transition-colors hover:bg-rose-500/20 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-40"
-                              title="Delete message for everyone"
-                              aria-label="Delete message for everyone"
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                            <span className="ml-0.5">
+                          <span className="ml-0.5">
                             {m.status === 'seen' ? <CheckCheck size={13} className="text-cyan-300" title="Seen" /> 
                              : m.status === 'delivered' ? <CheckCheck size={13} className="text-slate-300" title="Delivered" /> 
                              : m.status === 'sending' ? <div className="w-2.5 h-2.5 border-2 border-blue-300/30 border-t-blue-300 rounded-full animate-spin"></div> 
                              : <Check size={13} className="text-slate-400" title="Sent" />}
-                            </span>
-                          </>
+                          </span>
                         )}
                       </div>
                     </div>
