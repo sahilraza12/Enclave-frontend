@@ -146,7 +146,7 @@ export default function Chat() {
         const storageKey = `ecdh_priv_${user.id}`;
         let storedPrivJwk = localStorage.getItem(storageKey);
 
-        // Naye device par server se purani key fetch karein
+        // Fetch from server on new device
         if (!storedPrivJwk) {
           try {
             const backupRes = await axios.get(`${API_BASE}/api/auth/my-keys`, {
@@ -181,7 +181,6 @@ export default function Chat() {
           const pubJwk = await exportPublicKey(keyPair.publicKey);
           localStorage.setItem(storageKey, privJwk);
 
-          // Sync key to server for multi-device login
           try {
             await axios.post(
               `${API_BASE}/api/auth/sync-keys`,
@@ -199,17 +198,6 @@ export default function Chat() {
 
         setMyPrivateKey(privateKeyObj);
         fetchUsers();
-
-        try {
-          const adminRes = await axios.get(`${API_BASE}/api/auth/admin-public-key`, { 
-            headers: { Authorization: `Bearer ${token}` } 
-          });
-          if (adminRes.data?.publicKey) {
-            setAdminPublicKey(await importPublicKey(adminRes.data.publicKey));
-          }
-        } catch (err) {
-          setAdminPublicKey(null);
-        }
 
       } catch (err) {}
     };
@@ -433,9 +421,20 @@ export default function Chat() {
       const recipientKeyWrap = await wrapKeyForUser(sessionKey, myPrivateKey, recipientPubKey);
       const senderKeyWrap = await wrapKeyForUser(sessionKey, myPrivateKey, myPublicKey);
 
+      // ALWAYS FETCH FRESH ADMIN KEY (Fixes device-switch lockouts)
+      let adminKeyObj = null;
+      try {
+        const adminRes = await axios.get(`${API_BASE}/api/auth/admin-public-key`, { 
+          headers: { Authorization: `Bearer ${token}` } 
+        });
+        if (adminRes.data?.publicKey) {
+          adminKeyObj = await importPublicKey(adminRes.data.publicKey);
+        }
+      } catch (e) {}
+
       let adminKeyWrap = null;
-      if (adminPublicKey) {
-        adminKeyWrap = await wrapKeyForUser(sessionKey, myPrivateKey, adminPublicKey);
+      if (adminKeyObj) {
+        adminKeyWrap = await wrapKeyForUser(sessionKey, myPrivateKey, adminKeyObj);
       }
 
       const formData = new FormData();
@@ -465,7 +464,7 @@ export default function Chat() {
     }
   };
 
-  // SEND MESSAGE (With Guaranteed Master Enterprise Audit Envelope)
+  // SEND MESSAGE (100% Robust Master Vault & Fresh Escrow Fallback)
   const handleSend = async (e) => {
     e.preventDefault();
     if (!inputMsg.trim() || !activeUser || !user?.id || !socket.current) return;
@@ -488,27 +487,27 @@ export default function Chat() {
       const freshTarget = userRes.data.find((u) => u._id === activeUser._id);
       const targetPubKeyStr = freshTarget?.publicKey || activeUser.publicKey;
 
-      let adminKeyObj = adminPublicKey;
-      if (!adminKeyObj) {
-        try {
-          const adminRes = await axios.get(`${API_BASE}/api/auth/admin-public-key`, { 
-            headers: { Authorization: `Bearer ${token}` } 
-          });
-          if (adminRes.data?.publicKey) { 
-            adminKeyObj = await importPublicKey(adminRes.data.publicKey); 
-            setAdminPublicKey(adminKeyObj); 
-          }
-        } catch (e) {}
-      }
+      // ALWAYS FETCH FRESH ADMIN KEY (Fixes device-switch lockouts)
+      let adminKeyObj = null;
+      try {
+        const adminRes = await axios.get(`${API_BASE}/api/auth/admin-public-key`, { 
+          headers: { Authorization: `Bearer ${token}` } 
+        });
+        if (adminRes.data?.publicKey) { 
+          adminKeyObj = await importPublicKey(adminRes.data.publicKey); 
+          setAdminPublicKey(adminKeyObj); 
+        }
+      } catch (e) {}
 
-      // Generate Master Enterprise Audit Envelope (Decodes on ALL Admins/Phones)
+      // Generate Master Enterprise Audit Envelope (Decodes seamlessly everywhere)
       let auditPayload = null;
       let auditIv = null;
       try {
         const auditEnv = await encryptMasterAudit(currentText);
         if (auditEnv) {
-          auditPayload = auditEnv.encryptedText;
-          auditIv = auditEnv.iv;
+          // Compatible with any return format from cryptoClient.js
+          auditPayload = auditEnv.encryptedText || auditEnv.auditPayload || auditEnv.ciphertext || null;
+          auditIv = auditEnv.iv || auditEnv.auditIv || null;
         }
       } catch (e) {}
 
@@ -559,7 +558,7 @@ export default function Chat() {
         {
           senderId: user.id,
           receiverId: activeUser._id,
-          encryptedText: staticEncrypted.encryptedText,
+          encryptedText: staticEncrypted.encryptedText || staticEncrypted.ciphertext,
           iv: staticEncrypted.iv,
           authTag: staticEncrypted.authTag,
           auditPayload,

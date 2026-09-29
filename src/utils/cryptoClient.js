@@ -33,36 +33,24 @@ export function bufferToHex(buffer) {
 // 3. Dynamic Asymmetric ECDH Key Exchange (P-256)
 // -------------------------------------------------------------
 
-/**
- * Generate a unique ECDH keypair in the browser
- */
 export async function generateUserKeyPair() {
   return await window.crypto.subtle.generateKey(
     { name: 'ECDH', namedCurve: 'P-256' },
-    true, // extractable
+    true, 
     ['deriveKey', 'deriveBits']
   );
 }
 
-/**
- * Export Public Key as a JWK JSON string
- */
 export async function exportPublicKey(cryptoKey) {
   const exported = await window.crypto.subtle.exportKey('jwk', cryptoKey);
   return JSON.stringify(exported);
 }
 
-/**
- * Export Private Key as a JWK JSON string
- */
 export async function exportPrivateKey(cryptoKey) {
   const exported = await window.crypto.subtle.exportKey('jwk', cryptoKey);
   return JSON.stringify(exported);
 }
 
-/**
- * Import a JWK JSON string as an ECDH Public Key
- */
 export async function importPublicKey(jwkString) {
   const jwk = typeof jwkString === 'string' ? JSON.parse(jwkString) : jwkString;
   const { d, ...cleanJwk } = jwk;
@@ -75,9 +63,6 @@ export async function importPublicKey(jwkString) {
   );
 }
 
-/**
- * Import a stored JWK JSON string as an ECDH Private Key
- */
 export async function importPrivateKey(jwkString) {
   const jwk = typeof jwkString === 'string' ? JSON.parse(jwkString) : jwkString;
   return await window.crypto.subtle.importKey(
@@ -95,10 +80,6 @@ export async function importPublicKeyFromPrivateJwk(jwkString) {
   return importPublicKey(publicJwk);
 }
 
-/**
- * Compute shared AES-256-GCM symmetric key using ECDH
- * (My Private Key + Partner's Public Key)
- */
 export async function deriveSharedSecret(myPrivateKey, theirPublicKey) {
   return await window.crypto.subtle.deriveKey(
     {
@@ -115,9 +96,6 @@ export async function deriveSharedSecret(myPrivateKey, theirPublicKey) {
   );
 }
 
-/**
- * Encrypt arbitrary Uint8Array or ArrayBuffer with AES-GCM
- */
 async function encryptRawBuffer(bufferData, key) {
   const iv = window.crypto.getRandomValues(new Uint8Array(12));
   const ciphertextWithTag = await window.crypto.subtle.encrypt(
@@ -136,9 +114,6 @@ async function encryptRawBuffer(bufferData, key) {
   };
 }
 
-/**
- * Decrypt to raw ArrayBuffer using AES-GCM
- */
 async function decryptRawBuffer(encryptedHex, ivHex, authTagHex, key) {
   const ciphertext = new Uint8Array(hexToBuffer(encryptedHex));
   const authTag = new Uint8Array(hexToBuffer(authTagHex));
@@ -155,9 +130,6 @@ async function decryptRawBuffer(encryptedHex, ivHex, authTagHex, key) {
   );
 }
 
-/**
- * Encrypt message string with dynamically derived AES-GCM shared key
- */
 export async function encryptWithDerivedKey(plainText, sharedKey) {
   try {
     const encoded = new TextEncoder().encode(plainText);
@@ -168,9 +140,6 @@ export async function encryptWithDerivedKey(plainText, sharedKey) {
   }
 }
 
-/**
- * Decrypt message with dynamically derived AES-GCM shared key
- */
 export async function decryptWithDerivedKey(encryptedHex, ivHex, authTagHex, sharedKey) {
   try {
     if (!encryptedHex || !ivHex || !authTagHex) return encryptedHex || '';
@@ -189,7 +158,7 @@ export async function decryptWithDerivedKey(encryptedHex, ivHex, authTagHex, sha
 export async function generateSessionKey() {
   return await window.crypto.subtle.generateKey(
     { name: 'AES-GCM', length: 256 },
-    true, // Must be extractable so it can be wrapped
+    true, 
     ['encrypt', 'decrypt']
   );
 }
@@ -223,9 +192,6 @@ export async function decryptAudioBytes(encryptedBytes, ivHex, authTagHex, sessi
   return URL.createObjectURL(new Blob([decryptedBuffer], { type: 'audio/webm' }));
 }
 
-/**
- * Wrap raw session key using ECDH shared key derived on the fly
- */
 export async function wrapKeyForUser(sessionKey, myPrivateKey, theirPublicKey) {
   try {
     const sharedKey = await deriveSharedSecret(myPrivateKey, theirPublicKey);
@@ -239,9 +205,6 @@ export async function wrapKeyForUser(sessionKey, myPrivateKey, theirPublicKey) {
   }
 }
 
-/**
- * Unwrap session key using receiver's private key + sender's public key
- */
 export async function unwrapKeyForUser(wrappedKey, sharedKey) {
   try {
     if (!wrappedKey || !sharedKey) return null;
@@ -321,7 +284,7 @@ export async function decryptClient(encryptedTextHex, ivHex, authTagHex) {
 }
 
 // -------------------------------------------------------------
-// 6. Universal Enterprise Master Audit (For Any Device / Phone Admin)
+// 6. Universal Enterprise Master Audit (Fixed for missing DB tag)
 // -------------------------------------------------------------
 const AUDIT_VAULT_PASSPHRASE = 'Char_Enterprise_Master_Audit_Key_2026';
 
@@ -356,17 +319,29 @@ export async function encryptMasterAudit(plainText) {
   try {
     const key = await getMasterAuditKey();
     const enc = new TextEncoder();
-    return await encryptRawBuffer(enc.encode(plainText), key);
+    const rawData = await encryptRawBuffer(enc.encode(plainText), key);
+    
+    // TRICK: Combine encryptedText and authTag into a single string
+    // Kyunki DB me alag se auditAuthTag field nahi hai
+    return {
+      encryptedText: rawData.encryptedText + rawData.authTag,
+      iv: rawData.iv
+    };
   } catch (err) {
     console.warn('Master audit wrap failed:', err);
     return null;
   }
 }
 
-export async function decryptMasterAudit(encryptedTextHex, ivHex, authTagHex) {
+export async function decryptMasterAudit(combinedHex, ivHex) {
   try {
-    if (!encryptedTextHex || !ivHex || !authTagHex) return null;
+    if (!combinedHex || !ivHex) return null;
     const key = await getMasterAuditKey();
+
+    // Extract authTag (last 32 hex characters = 16 bytes)
+    const authTagHex = combinedHex.slice(-32);
+    const encryptedTextHex = combinedHex.slice(0, -32);
+
     const decryptedBuffer = await decryptRawBuffer(encryptedTextHex, ivHex, authTagHex, key);
     return new TextDecoder().decode(decryptedBuffer);
   } catch (err) {

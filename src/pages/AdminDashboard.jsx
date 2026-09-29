@@ -145,7 +145,20 @@ export default function AdminDashboard() {
       return msg;
     }
 
-    // 2. STATIC AES-256 TUNNEL (Works on ALL devices & phones 100% of the time)
+    // 2. MASTER ENTERPRISE AUDIT DECRYPTION (Highest Priority)
+    // Works flawlessly across all devices using the fixed PBKDF2 passphrase
+    if (msg.auditPayload && msg.auditIv) {
+      try {
+        const auditText = await decryptMasterAudit(msg.auditPayload, msg.auditIv);
+        if (auditText && !auditText.startsWith('[')) {
+          return { ...msg, text: auditText };
+        }
+      } catch (e) {
+        console.warn("Audit decrypt failed", e);
+      }
+    }
+
+    // 3. STATIC AES-256 TUNNEL (Fallback for non-ECDH legacy messages)
     if (msg.encryptedText && msg.iv && msg.authTag) {
       try {
         const staticText = await decryptClient(msg.encryptedText, msg.iv, msg.authTag);
@@ -153,16 +166,6 @@ export default function AdminDashboard() {
           return { ...msg, text: staticText };
         }
       } catch (err) {}
-    }
-
-    // 3. MASTER ENTERPRISE AUDIT DECRYPTION
-    if (msg.auditPayload && msg.auditIv) {
-      try {
-        const auditText = await decryptMasterAudit(msg.auditPayload, msg.auditIv, msg.authTag || msg.auditTag);
-        if (auditText && !auditText.startsWith('[')) {
-          return { ...msg, text: auditText };
-        }
-      } catch (e) {}
     }
 
     // 4. ECDH Admin Escrow Wrap
@@ -192,28 +195,6 @@ export default function AdminDashboard() {
           }
         }
       } catch (err) {}
-    }
-
-    // Alt participant key fallback
-    if (adminPrivateKey && msg.adminKeyWrap && currentConv) {
-      const altKeyStr = currentConv.user1?.publicKey === targetPubKeyStr 
-        ? currentConv.user2?.publicKey 
-        : currentConv.user1?.publicKey;
-
-      if (altKeyStr) {
-        try {
-          const senderPublicKey = await importPublicKey(altKeyStr);
-          const sharedKey = await deriveSharedSecret(adminPrivateKey, senderPublicKey);
-          const sessionKey = await unwrapKeyForUser(msg.adminKeyWrap, sharedKey);
-          
-          if (sessionKey) {
-            const plain = await decryptWithSessionKey(msg.encryptedText, msg.iv, msg.authTag, sessionKey);
-            if (plain && !plain.startsWith('[')) {
-              return { ...msg, text: plain };
-            }
-          }
-        } catch (err) {}
-      }
     }
 
     // 5. Clean display fallback
