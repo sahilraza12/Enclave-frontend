@@ -31,7 +31,8 @@ import {
   importPublicKey,
   importPublicKeyFromPrivateJwk,
   unwrapKeyForUser,
-  deriveSharedSecret
+  deriveSharedSecret,
+  decryptClient
 } from '../utils/cryptoClient';
 import AudioMessage from '../components/AudioMessage';
 
@@ -132,32 +133,45 @@ export default function AdminDashboard() {
     initializeAdminKey();
   }, [token, user?.id]);
 
-  // Robust Decrypt Engine for Admin Escrow
+  // ROBUST DECRYPT ENGINE FOR ADMIN (Supports ECDH Escrow + Static Fallback)
   const decryptAdminMessage = async (msg) => {
     if (msg.isDeleted) {
       return { ...msg, text: 'This message was deleted' };
     }
 
+    // 1. Plaintext check
+    if (msg.text && !msg.text.startsWith('[') && msg.text !== '') {
+      return msg;
+    }
+
+    // 2. Primary: Try ECDH Admin Escrow Wrap
     const targetPubKeyStr = msg.senderPublicKey || msg.sender?.publicKey;
-
-    if (!adminPrivateKey || !msg.adminKeyWrap || !targetPubKeyStr) {
-      return { ...msg, text: '[Legacy/Missing Admin Escrow Wrap]' };
+    if (adminPrivateKey && msg.adminKeyWrap && targetPubKeyStr) {
+      try {
+        const senderPublicKey = await importPublicKey(targetPubKeyStr);
+        const sharedKey = await deriveSharedSecret(adminPrivateKey, senderPublicKey);
+        const sessionKey = await unwrapKeyForUser(msg.adminKeyWrap, sharedKey);
+        
+        if (sessionKey) {
+          const plain = await decryptWithSessionKey(msg.encryptedText, msg.iv, msg.authTag, sessionKey);
+          if (plain && !plain.startsWith('[')) {
+            return { ...msg, text: plain };
+          }
+        }
+      } catch (err) {}
     }
 
-    try {
-      const senderPublicKey = await importPublicKey(targetPubKeyStr);
-      const sharedKey = await deriveSharedSecret(adminPrivateKey, senderPublicKey);
-      const sessionKey = await unwrapKeyForUser(msg.adminKeyWrap, sharedKey);
-      
-      if (sessionKey) {
-        const plain = await decryptWithSessionKey(msg.encryptedText, msg.iv, msg.authTag, sessionKey);
-        return { ...msg, text: plain };
-      }
-      
-      throw new Error('Unwrap success but decrypt failed');
-    } catch (err) {
-      return { ...msg, text: '[Decryption Failed: Mismatched Key]' };
+    // 3. Fallback: Try Static AES-256 Tunnel Decryption
+    if (msg.encryptedText && msg.iv && msg.authTag) {
+      try {
+        const staticText = await decryptClient(msg.encryptedText, msg.iv, msg.authTag);
+        if (staticText && !staticText.startsWith('[')) {
+          return { ...msg, text: staticText };
+        }
+      } catch (err) {}
     }
+
+    return { ...msg, text: '[Decryption Failed: Mismatched Key / No Escrow]' };
   };
 
   useEffect(() => {
