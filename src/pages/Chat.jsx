@@ -108,19 +108,23 @@ export default function Chat() {
 
   const handleKillConversation = async () => {
     if (!activeUser || !token || isClearingConversation) return;
+    if (!window.confirm('This will permanently delete your account. Existing messages will remain available to the other participant and admins. Continue?')) return;
 
     setIsClearingConversation(true);
     setClearConversationError('');
     try {
-      await axios.delete(`${API_BASE}/api/messages/${activeUser._id}`, {
+      await axios.delete(`${API_BASE}/api/auth/account`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setMessages([]);
+      socket.current?.disconnect();
+      localStorage.removeItem(`ecdh_priv_${user.id}`);
+      logout();
+      navigate('/', { replace: true });
     } catch (err) {
       setClearConversationError(
         err.response?.status === 404
-          ? 'Backend update required: deploy the latest server code, then retry KILL.'
-          : err.response?.data?.error || 'Could not clear this conversation. Please retry.'
+          ? 'Account deletion endpoint is unavailable. Deploy the latest server code and retry.'
+          : err.response?.data?.error || 'Could not delete this account. Please retry.'
       );
     } finally {
       setIsClearingConversation(false);
@@ -414,7 +418,7 @@ export default function Chat() {
   };
 
   const startRecording = async () => {
-    if (!activeUser) return;
+    if (!activeUser || activeUser.isDeleted) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaRecorderRef.current = new MediaRecorder(stream);
@@ -447,7 +451,7 @@ export default function Chat() {
   };
 
   const handleSendAudio = async (audioBlob) => {
-    if (!activeUser || !myPrivateKey || !myPublicKey) return;
+    if (!activeUser || activeUser.isDeleted || !myPrivateKey || !myPublicKey) return;
 
     try {
       const userRes = await axios.get(`${API_BASE}/api/auth/users`, { 
@@ -497,7 +501,7 @@ export default function Chat() {
   // SEND MESSAGE (100% Robust Master Vault & Fresh Escrow Fallback)
   const handleSend = async (e) => {
     e.preventDefault();
-    if (!inputMsg.trim() || !activeUser || !user?.id || !socket.current) return;
+    if (!inputMsg.trim() || !activeUser || activeUser.isDeleted || !user?.id || !socket.current) return;
 
     const currentText = inputMsg;
     setInputMsg('');
@@ -596,7 +600,7 @@ export default function Chat() {
 
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
-    if (!file || !activeUser) return;
+    if (!file || !activeUser || activeUser.isDeleted) return;
 
     const formData = new FormData();
     formData.append('file', file);
@@ -767,12 +771,12 @@ export default function Chat() {
                 <button
                   type="button"
                   onClick={handleKillConversation}
-                  disabled={isClearingConversation || messages.length === 0}
+                  disabled={isClearingConversation}
                   className="flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-[11px] font-mono font-bold text-rose-300 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Remove this conversation from your side"
+                  title="Permanently delete your account; messages remain available to the other participant and admins"
                 >
                   <Ban size={13} />
-                  <span>{isClearingConversation ? 'KILLING...' : 'KILL'}</span>
+                  <span>{isClearingConversation ? 'DELETING...' : 'KILL'}</span>
                 </button>
               </div>
             </div>
@@ -890,12 +894,12 @@ export default function Chat() {
                 ref={fileInputRef} 
                 onChange={handleFileUpload} 
                 className="hidden" 
-                disabled={isUploading || isDerivingKey} 
+                disabled={activeUser.isDeleted || isUploading || isDerivingKey} 
               />
               <button 
                 type="button" 
                 onClick={() => fileInputRef.current.click()} 
-                disabled={isUploading || isDerivingKey} 
+                disabled={activeUser.isDeleted || isUploading || isDerivingKey} 
                 className={`p-2.5 bg-[#121727] hover:bg-[#1a2138] border border-white/5 text-slate-300 rounded-xl transition-all duration-150 active:scale-95 ${isUploading || isDerivingKey ? 'opacity-50 cursor-not-allowed' : ''}`} 
                 title="Attach file or image"
               >
@@ -905,7 +909,7 @@ export default function Chat() {
               <button 
                 type="button" 
                 onClick={isRecording ? stopRecording : startRecording} 
-                disabled={isUploading || isDerivingKey} 
+                disabled={activeUser.isDeleted || isUploading || isDerivingKey} 
                 className={`p-2.5 rounded-xl border transition-all duration-150 active:scale-95 flex items-center justify-center ${isRecording ? 'bg-rose-600 border-rose-500 text-white animate-pulse shadow-lg shadow-rose-600/30' : 'bg-[#121727] hover:bg-[#1a2138] border-white/5 text-slate-300'}`} 
                 title={isRecording ? 'Stop Recording' : 'Record Encrypted Voice Note'}
               >
@@ -930,12 +934,15 @@ export default function Chat() {
               
               <button 
                 type="submit" 
-                disabled={isUploading || isDerivingKey || !inputMsg.trim() || isRecording} 
+                disabled={activeUser.isDeleted || isUploading || isDerivingKey || !inputMsg.trim() || isRecording} 
                 className="bg-blue-600 hover:bg-blue-500 p-2.5 rounded-xl text-white transition-all duration-150 shadow-lg shadow-blue-600/25 active:scale-95 disabled:opacity-50" 
                 title="Send message"
               >
                 <Send size={18} />
               </button>
+              {activeUser.isDeleted && (
+                <p className="text-[11px] text-slate-500">This account was deleted. Historical messages are read-only.</p>
+              )}
             </form>
           </>
         ) : (

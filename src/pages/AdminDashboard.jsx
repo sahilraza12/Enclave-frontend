@@ -223,7 +223,12 @@ export default function AdminDashboard() {
     });
 
     adminSocket.on('conversationCleared', (notification) => {
-      setClearNotification(notification);
+      setClearNotification({ ...notification, type: 'conversationCleared' });
+    });
+
+    adminSocket.on('accountDeleted', (notification) => {
+      setClearNotification({ ...notification, type: 'accountDeleted' });
+      fetchConversations();
     });
 
     adminSocket.on('messageDeleted', ({ msgId, conversationId }) => {
@@ -352,9 +357,13 @@ export default function AdminDashboard() {
         >
           <AlertCircle size={18} className="mt-0.5 flex-shrink-0 text-amber-400" />
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-semibold text-white">KILL action: conversation cleared from user side</p>
+            <p className="text-xs font-semibold text-white">
+              {clearNotification.type === 'accountDeleted' ? 'KILL action: user account permanently deleted' : 'KILL action: conversation cleared from user side'}
+            </p>
             <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
-              {clearNotification.clearingUserName} ({clearNotification.clearingUserEmail}) removed their side of the conversation with {clearNotification.otherUserName} ({clearNotification.otherUserEmail}). Your audit history is unchanged.
+              {clearNotification.type === 'accountDeleted'
+                ? `${clearNotification.deletedUserName} (${clearNotification.deletedUserEmail}) deleted their account. Message history remains available for audit.`
+                : `${clearNotification.clearingUserName} (${clearNotification.clearingUserEmail}) removed their side of the conversation with ${clearNotification.otherUserName} (${clearNotification.otherUserEmail}). Your audit history is unchanged.`}
             </p>
           </div>
           <button
