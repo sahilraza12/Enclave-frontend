@@ -56,6 +56,7 @@ export default function AdminDashboard() {
   const [cursor, setCursor] = useState(null);
 
   const [activityLogs, setActivityLogs] = useState([]);
+  const [clearNotification, setClearNotification] = useState(null);
 
   const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'user' });
   const [provisionStatus, setProvisionStatus] = useState(null);
@@ -221,6 +222,10 @@ export default function AdminDashboard() {
       fetchConversations();
     });
 
+    adminSocket.on('conversationCleared', (notification) => {
+      setClearNotification(notification);
+    });
+
     adminSocket.on('messageDeleted', ({ msgId, conversationId }) => {
       if (activeConv && conversationId === activeConv._id) {
         setChatLogs((prev) => prev.map((msg) => 
@@ -340,6 +345,28 @@ export default function AdminDashboard() {
 
   return (
     <div className="admin-shell flex h-screen bg-[#07090e] text-slate-100 font-sans antialiased overflow-hidden selection:bg-blue-600 selection:text-white">
+      {clearNotification && (
+        <div
+          role="status"
+          className="fixed right-4 top-4 z-50 flex max-w-sm items-start gap-3 rounded-xl border border-amber-500/30 bg-[#121727] p-4 shadow-xl"
+        >
+          <AlertCircle size={18} className="mt-0.5 flex-shrink-0 text-amber-400" />
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-semibold text-white">KILL action: conversation cleared from user side</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
+              {clearNotification.clearingUserName} ({clearNotification.clearingUserEmail}) removed their side of the conversation with {clearNotification.otherUserName} ({clearNotification.otherUserEmail}). Your audit history is unchanged.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setClearNotification(null)}
+            className="text-slate-400 transition-colors hover:text-white"
+            aria-label="Dismiss notification"
+          >
+            ×
+          </button>
+        </div>
+      )}
       {/* Sidebar Navigation */}
       <aside className="admin-sidebar w-80 md:w-96 border-r border-white/5 bg-[#0b0e18]/90 backdrop-blur-2xl flex flex-col justify-between select-none z-20">
         <div className="flex flex-col h-full overflow-hidden">

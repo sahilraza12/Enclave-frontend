@@ -49,6 +49,8 @@ export default function Chat() {
   const [users, setUsers] = useState([]);
   const [activeUser, setActiveUser] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [isClearingConversation, setIsClearingConversation] = useState(false);
+  const [clearConversationError, setClearConversationError] = useState('');
   const [inputMsg, setInputMsg] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -100,7 +102,29 @@ export default function Chat() {
   // Handle active user change - clear their unread count
   const handleUserSelect = (u) => {
     setActiveUser(u);
+    setClearConversationError('');
     setUnreadCounts((prev) => ({ ...prev, [u._id]: 0 }));
+  };
+
+  const handleKillConversation = async () => {
+    if (!activeUser || !token || isClearingConversation) return;
+
+    setIsClearingConversation(true);
+    setClearConversationError('');
+    try {
+      await axios.delete(`${API_BASE}/api/messages/${activeUser._id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setMessages([]);
+    } catch (err) {
+      setClearConversationError(
+        err.response?.status === 404
+          ? 'Backend update required: deploy the latest server code, then retry KILL.'
+          : err.response?.data?.error || 'Could not clear this conversation. Please retry.'
+      );
+    } finally {
+      setIsClearingConversation(false);
+    }
   };
 
   // FAST DECRYPT ENGINE (With Robust Fallback)
@@ -735,11 +759,40 @@ export default function Chat() {
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2 text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg font-mono font-medium">
-                <ShieldCheck size={14} />
-                <span>{activeSharedKey ? 'ECDH Dual Envelope Active' : 'AES-256 Static Tunnel'}</span>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg font-mono font-medium">
+                  <ShieldCheck size={14} />
+                  <span>{activeSharedKey ? 'ECDH Dual Envelope Active' : 'AES-256 Static Tunnel'}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleKillConversation}
+                  disabled={isClearingConversation || messages.length === 0}
+                  className="flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-[11px] font-mono font-bold text-rose-300 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Remove this conversation from your side"
+                >
+                  <Ban size={13} />
+                  <span>{isClearingConversation ? 'KILLING...' : 'KILL'}</span>
+                </button>
               </div>
             </div>
+
+            {clearConversationError && (
+              <div
+                role="alert"
+                className="flex items-center justify-between gap-3 border-b border-rose-500/20 bg-rose-500/10 px-6 py-2.5 text-xs text-rose-200"
+              >
+                <span>{clearConversationError}</span>
+                <button
+                  type="button"
+                  onClick={() => setClearConversationError('')}
+                  className="text-rose-200/70 hover:text-white"
+                  aria-label="Dismiss error"
+                >
+                  ×
+                </button>
+              </div>
+            )}
 
             {/* Chat Map Area */}
             <div className="chat-messages flex-1 overflow-y-auto p-6 space-y-3.5 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
